@@ -6,7 +6,7 @@ import pickle
 import time
 from enum import Enum
 from functools import partial
-from typing import Callable, Any, TypeVar
+from typing import Callable, Any, TypeVar, Dict, Hashable, Optional
 
 from aio_pika.exchange import ExchangeType
 from aio_pika.channel import Channel
@@ -69,7 +69,7 @@ class RPC(Base):
         self.loop = self.channel.loop
         self.proxy = Proxy(self.call)
         self.result_queue = None
-        self.futures = dict()
+        self.futures = {}  # type Dict[int, asyncio.Future]
         self.result_consumer_tag = None
         self.routes = {}
         self.queues = {}
@@ -146,7 +146,9 @@ class RPC(Base):
         )
 
         self.channel.add_close_callback(self.on_close)
-        self.channel.add_on_return_callback(self.on_message_returned)
+        self.channel.add_on_return_callback(
+            self.on_message_returned, weak=False
+        )
 
     def on_close(self, exc=None):
         log.debug("Closing RPC futures because %r", exc)
@@ -170,12 +172,12 @@ class RPC(Base):
         await rpc.initialize(**kwargs)
         return rpc
 
-    def on_message_returned(self, message: ReturnedMessage):
+    def on_message_returned(self, sender: 'RPC', message: ReturnedMessage):
         correlation_id = int(
             message.correlation_id
         ) if message.correlation_id else None
 
-        future = self.futures.pop(correlation_id, None)   # type: asyncio.Future
+        future = self.futures.pop(correlation_id, None)
 
         if not future or future.done():
             log.warning("Unknown message was returned: %r", message)
@@ -188,7 +190,7 @@ class RPC(Base):
             message.correlation_id
         ) if message.correlation_id else None
 
-        future = self.futures.pop(correlation_id, None)  # type: asyncio.Future
+        future = self.futures.pop(correlation_id, None)
 
         if future is None:
             log.warning("Unknown message: %r", message)
@@ -296,10 +298,12 @@ class RPC(Base):
         """ Executes rpc call. Might be overlapped. """
         return await func(**payload)
 
-    async def call(self, method_name, kwargs: dict=None, *,
-                   expiration: int=None, priority: int=5,
-                   delivery_mode: DeliveryMode=DELIVERY_MODE):
-
+    async def call(
+        self, method_name,
+        kwargs: Optional[Dict[Hashable, Any]] = None, *,
+        expiration: Optional[int] = None, priority: int = 5,
+        delivery_mode: DeliveryMode = DELIVERY_MODE
+    ):
         """ Call remote method and awaiting result.
 
         :param method_name: Name of method

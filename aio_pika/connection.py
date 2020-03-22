@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from functools import partial
+from typing import Optional
 from typing import Type, TypeVar
 
 from yarl import URL
@@ -46,14 +47,17 @@ class Connection:
             result[key] = parser(kwargs.get(key, default))
         return result
 
-    def __init__(self, url, loop=None, **kwargs):
+    def __init__(
+        self, url,
+        loop: Optional[asyncio.AbstractEventLoop] = None, **kwargs
+    ):
         self.loop = loop or asyncio.get_event_loop()
         self.url = URL(url)
 
         self.kwargs = self._parse_kwargs(kwargs or self.url.query)
 
-        self._close_callbacks = CallbackCollection()
-        self.connection = None     # type: aiormq.Connection
+        self._close_callbacks = CallbackCollection(self)
+        self.connection = None  # type: Optional[aiormq.Connection]
         self.closing = self.loop.create_future()
 
     @property

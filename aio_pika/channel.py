@@ -1,8 +1,8 @@
 import asyncio
-from enum import unique, Enum
+from enum import Enum, unique
 from logging import getLogger
+from typing import Union, Optional
 from warnings import warn
-from typing import Union
 
 import aiormq
 import aiormq.types
@@ -10,9 +10,9 @@ import aiormq.types
 from .exchange import Exchange, ExchangeType
 from .message import IncomingMessage
 from .queue import Queue
-from .transaction import Transaction
 from .tools import CallbackCollection
-from .types import ReturnCallbackType, CloseCallbackType, TimeoutType
+from .transaction import Transaction
+from .types import CloseCallbackType, ReturnCallbackType, TimeoutType
 
 log = getLogger(__name__)
 
@@ -29,7 +29,7 @@ class Channel:
     QUEUE_CLASS = Queue
     EXCHANGE_CLASS = Exchange
 
-    def __init__(self, connection, channel_number: int = None,
+    def __init__(self, connection, channel_number: Optional[int] = None,
                  publisher_confirms: bool = True,
                  on_return_raises: bool = False):
         """
@@ -50,9 +50,9 @@ class Channel:
         self.loop = connection.loop
 
         self._connection = connection
-        self._done_callbacks = CallbackCollection()
-        self._return_callbacks = CallbackCollection()
-        self._channel = None  # type: aiormq.Channel
+        self._done_callbacks = CallbackCollection(self)
+        self._return_callbacks = CallbackCollection(self)
+        self._channel = None  # type: Optional[aiormq.Channel]
         self._channel_number = channel_number
         self._on_return_raises = on_return_raises
         self._publisher_confirms = publisher_confirms
@@ -60,7 +60,7 @@ class Channel:
         self._delivery_tag = 0
 
         # noinspection PyTypeChecker
-        self.default_exchange = None       # type: Exchange
+        self.default_exchange = None       # type: Optional[Exchange]
 
     @property
     def done_callbacks(self) -> CallbackCollection:
@@ -85,7 +85,7 @@ class Channel:
             return
 
         # noinspection PyTypeChecker
-        channel = self._channel     # type: aiormq.Channel
+        channel = self._channel  # type: aiormq.Channel
         self._channel = ()
         await channel.close()
 
@@ -117,6 +117,9 @@ class Channel:
             self.__class__.__name__, conn, self
         )
 
+    def __del__(self):
+        print('deleted')
+
     def __iter__(self):
         return (yield from self.__await__())
 
@@ -139,8 +142,12 @@ class Channel:
     def remove_close_callback(self, callback: CloseCallbackType) -> None:
         self._done_callbacks.remove(callback)
 
-    def add_on_return_callback(self, callback: ReturnCallbackType) -> None:
-        self._return_callbacks.add(callback)
+    def add_on_return_callback(
+        self,
+        callback: ReturnCallbackType,
+        weak: bool = True
+    ) -> None:
+        self._return_callbacks.add(callback, weak=weak)
 
     def remove_on_return_callback(self, callback: ReturnCallbackType) -> None:
         self._return_callbacks.remove(callback)
@@ -322,7 +329,6 @@ class Channel:
         self, queue_name: str, timeout: TimeoutType = None,
         if_unused: bool = False, if_empty: bool = False, nowait: bool = False
     ) -> aiormq.spec.Queue.DeleteOk:
-
         return await asyncio.wait_for(
             self.channel.queue_delete(
                 queue=queue_name,
@@ -337,7 +343,6 @@ class Channel:
         self, exchange_name: str, timeout: TimeoutType = None,
         if_unused: bool = False, nowait: bool = False
     ) -> aiormq.spec.Exchange.DeleteOk:
-
         return await asyncio.wait_for(
             self.channel.exchange_delete(
                 exchange=exchange_name,
